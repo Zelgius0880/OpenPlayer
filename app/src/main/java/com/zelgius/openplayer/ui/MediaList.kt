@@ -26,24 +26,37 @@ import com.zelgius.openplayer.model.Media
 import com.zelgius.openplayer.model.Track
 import com.zelgius.openplayer.parseAsJsonArray
 import com.zelgius.openplayer.ui.preview.SAMPLE_ALBUM_LIST
+import java.net.URI
+import java.util.*
 
 @Composable
 fun BigMedialList(list: List<Media>) {
     val rows = mutableListOf<Pair<Media, Media?>>()
-    for(i in list.indices step 2) {
+    for (i in list.indices step 2) {
         rows.add(list[i] to list.getOrNull(i + 1))
     }
 
-    Text(text = "${rows.size}")
-    
-    /*LazyColumnFor(rows) {item ->
-        Row() {
-            BigMediaItem(item = item.first)
-            
-            if(item.second != null)
-                BigMediaItem(item = item.second!!)
+    LazyColumnFor(rows, modifier = Modifier.fillMaxWidth()) { item ->
+        Row(horizontalArrangement = Arrangement.SpaceAround, modifier = Modifier.fillMaxWidth()) {
+            Box(padding = 4.dp) {
+                BigMediaItem(item = item.first)
+            }
+
+            Box(padding = 4.dp) {
+                if (item.second != null)
+                    BigMediaItem(item = item.second!!)
+            }
         }
-    }*/
+    }
+}
+
+@Composable
+fun InlineMedialList(list: List<Media>) {
+    LazyColumnFor(list, modifier = Modifier.fillMaxWidth()) { item ->
+        Box(padding = 8.dp) {
+            InlineMediaItem(item = item)
+        }
+    }
 }
 
 @Composable
@@ -161,5 +174,25 @@ fun InlineTrackItemPreview() {
 @Preview
 @Composable
 fun BigMedialListPreview() {
-    BigMedialList(list = SAMPLE_ALBUM_LIST)
+    val medias = (1..100).map {
+        Track(
+            "Track $it", "track", uri = UUID.randomUUID().toString(),
+            Album("Album $it", "album", "Album $it")
+        )
+    }
+
+    BigMedialList(list = medias)
+}
+
+@Preview
+@Composable
+fun InlineMedialListPreview() {
+    val medias = (1..100).map {
+        Track(
+            "Track $it", "track", uri = UUID.randomUUID().toString(),
+            Album("Album $it", "album", "Album $it")
+        )
+    }
+
+    InlineMedialList(list = medias)
 }

@@ -1,8 +1,9 @@
-package com.zelgius.openplayer.repository
+package com.zelgius.openplayer.repository.e2e
 
 import com.thetransactioncompany.jsonrpc2.client.RawResponseInspector
 import com.zelgius.openplayer.model.Album
 import com.zelgius.openplayer.model.Track
+import com.zelgius.openplayer.repository.MediaRepository
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions
 import org.junit.jupiter.api.Test
@@ -60,7 +61,7 @@ internal class MediaRepositoryTest {
                     Track(
                         name = "",
                         type = "",
-                        uri = "local:track:The%20Beatles%20-%20Let%20It%20Be.mp3",
+                        uri = "local:track:Music/The%20Legend%20of%20Zelda%2030th%20Anniversary%20Concert/1-03%20The%20Wind%20Waker%20Medley.mp3",
                         Album("", "", "uri")
                     )
                 )

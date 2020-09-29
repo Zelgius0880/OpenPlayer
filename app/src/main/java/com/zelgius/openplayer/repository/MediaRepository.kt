@@ -1,13 +1,11 @@
 package com.zelgius.openplayer.repository
 
-import com.beust.klaxon.Converter
-import com.beust.klaxon.Klaxon
+import android.net.Uri
 import com.thetransactioncompany.jsonrpc2.JSONRPC2Request
 import com.thetransactioncompany.jsonrpc2.client.ConnectionConfigurator
 import com.thetransactioncompany.jsonrpc2.client.JSONRPC2Session
 import com.zelgius.openplayer.BuildConfig
 import com.zelgius.openplayer.model.Album
-import com.zelgius.openplayer.model.Media
 import com.zelgius.openplayer.model.MediaImage
 import com.zelgius.openplayer.model.Track
 import com.zelgius.openplayer.parseAsJsonArray
@@ -16,6 +14,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import net.minidev.json.JSONArray
 import net.minidev.json.JSONObject
+import okhttp3.ConnectionSpec
 import okhttp3.OkHttpClient
 import okhttp3.ResponseBody
 import okhttp3.logging.HttpLoggingInterceptor
@@ -25,18 +24,40 @@ import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.GET
 import retrofit2.http.Header
 import retrofit2.http.Path
+import java.net.URI
 import java.net.URL
+import java.net.URLDecoder
+import java.net.URLEncoder
+import java.security.SecureRandom
+import java.security.cert.CertificateException
+import java.security.cert.X509Certificate
+import javax.net.ssl.*
 
 
 class MediaRepository(url: String, debug: Boolean = false) {
+    enum class Status {
+        AVAILABLE, UNAVAILABLE, UNKNOWN
+    }
+
+    var status = Status.UNKNOWN
 
     private var requestID = 0
 
+    private suspend fun isAvailable() =
+        withContext(Dispatchers.IO) {
+            service.checkAvailability().execute().isSuccessful
+        }
+
+
+    suspend fun refreshStatus() = withContext(Dispatchers.IO) {
+        status = if (isAvailable()) Status.AVAILABLE else Status.UNAVAILABLE
+    }
+
     // The JSON-RPC 2.0 server URL
     //"http://127.0.0.1:6680/mopidy/rpc"
-    var serverURL: URL = URL("$url/player/rpc")
+    private var rpcServerURL: URL = URL("$url/player/rpc")
 
-    val session = JSONRPC2Session(serverURL).apply {
+    val session = JSONRPC2Session(rpcServerURL).apply {
         options.requestContentType = "application/json"
         options.trustAllCerts(true)
         connectionConfigurator = ConnectionConfigurator {
@@ -48,15 +69,27 @@ class MediaRepository(url: String, debug: Boolean = false) {
         .baseUrl(url)
         .addConverterFactory(GsonConverterFactory.create())
         .apply {
-            if (debug)
-                client(
-                    OkHttpClient.Builder().also {
-                        val logger = HttpLoggingInterceptor()
-                        logger.level = HttpLoggingInterceptor.Level.BODY
-                        it.addInterceptor(logger)
+            client(
+                if (url.startsWith("htpps")) {
+                    UnsafeOkHttpClientBuilder().also {
+                        it.builder.apply {
+                            if (debug) {
+                                val logger = HttpLoggingInterceptor()
+                                logger.level = HttpLoggingInterceptor.Level.BODY
+                                addInterceptor(logger)
+                            }
+                        }
                     }.build()
-
-                )
+                } else {
+                  OkHttpClient.Builder().apply {
+                      if (debug) {
+                          val logger = HttpLoggingInterceptor()
+                          logger.level = HttpLoggingInterceptor.Level.BODY
+                          addInterceptor(logger)
+                      }
+                  }.build()
+                }
+            )
         }
         .build()
 
@@ -66,7 +99,7 @@ class MediaRepository(url: String, debug: Boolean = false) {
         call(
             method = "core.library.browse",
             params = mapOf("uri" to "local:directory?type=album")
-        ).parseAsJsonArray<List<Album>>()
+        ).parseAsJsonArray<Album>()
 
 
     suspend fun getAlbumImage(vararg uris: String) =
@@ -88,7 +121,12 @@ class MediaRepository(url: String, debug: Boolean = false) {
     suspend fun getTrack(track: Track) =
         withContext(Dispatchers.IO) {
             with(
-                service.getTrack(key = BuildConfig.KEY, track.uri.replace("local:track:", "")).execute()
+                service.getTrack(key = BuildConfig.KEY, track.uri
+                    .replace("local:track:", "")
+                    .decodeUri()
+                    .encodeUri()
+                )
+                    .execute()
             ) {
                 this.body()?.byteStream()
             }
@@ -117,7 +155,10 @@ class MediaRepository(url: String, debug: Boolean = false) {
             }
         }
 
-    interface TrackService{
+    interface TrackService {
+        @GET("/")
+        fun checkAvailability(): Call<ResponseBody>
+
         @GET("/track/{name}")
         fun getTrack(
             @Header("X-Auth-Token") key: String,
@@ -125,3 +166,54 @@ class MediaRepository(url: String, debug: Boolean = false) {
         ): Call<ResponseBody>
     }
 }
+
+class UnsafeOkHttpClientBuilder {
+    val builder = OkHttpClient.Builder()
+
+    fun build(): OkHttpClient {
+        return try {
+            // Create a trust manager that does not validate certificate chains
+            val trustAllCerts: Array<TrustManager> = arrayOf(
+                object : X509TrustManager {
+                    @Throws(CertificateException::class)
+                    override fun checkClientTrusted(
+                        chain: Array<X509Certificate?>?,
+                        authType: String?
+                    ) {
+                    }
+
+                    @Throws(CertificateException::class)
+                    override fun checkServerTrusted(
+                        chain: Array<X509Certificate?>?,
+                        authType: String?
+                    ) {
+                    }
+
+                    override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+                }
+            )
+
+            // Install the all-trusting trust manager
+            val sslContext: SSLContext = SSLContext.getInstance("SSL")
+            sslContext.init(null, trustAllCerts, SecureRandom())
+
+            // Create an ssl socket factory with our all-trusting manager
+            val sslSocketFactory: SSLSocketFactory = sslContext.socketFactory
+            builder.sslSocketFactory(sslSocketFactory, trustAllCerts[0] as X509TrustManager)
+            builder.connectionSpecs(
+                listOf(
+                    ConnectionSpec.MODERN_TLS,
+                    ConnectionSpec.COMPATIBLE_TLS
+                )
+            )
+            builder.hostnameVerifier { _, _ -> true }
+            builder.build()
+        } catch (e: Exception) {
+            throw RuntimeException(e)
+        }
+    }
+}
+
+fun String.decodeUri() = URLDecoder.decode(this, "UTF-8")
+
+fun String.encodeUri() = URLEncoder.encode(this, "UTF-8")
