@@ -1,6 +1,5 @@
 package com.zelgius.openplayer.repository
 
-import android.net.Uri
 import com.thetransactioncompany.jsonrpc2.JSONRPC2Request
 import com.thetransactioncompany.jsonrpc2.client.ConnectionConfigurator
 import com.thetransactioncompany.jsonrpc2.client.JSONRPC2Session
@@ -24,13 +23,15 @@ import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.GET
 import retrofit2.http.Header
 import retrofit2.http.Path
-import java.net.URI
+import java.io.IOException
+import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.security.SecureRandom
 import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
+import java.util.concurrent.TimeUnit
 import javax.net.ssl.*
 
 
@@ -39,13 +40,62 @@ class MediaRepository(url: String, debug: Boolean = false) {
         AVAILABLE, UNAVAILABLE, UNKNOWN
     }
 
+
+    private val trustAllCerts: Array<TrustManager> = arrayOf(
+        object : X509TrustManager {
+            @Throws(CertificateException::class)
+            override fun checkClientTrusted(
+                chain: Array<X509Certificate?>?,
+                authType: String?
+            ) {
+            }
+
+            @Throws(CertificateException::class)
+            override fun checkServerTrusted(
+                chain: Array<X509Certificate?>?,
+                authType: String?
+            ) {
+            }
+
+            override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+        }
+    )
+
+    private val client by lazy {
+        if (url.startsWith("https")) {
+            UnsafeOkHttpClientBuilder().also {
+                it.builder.apply {
+                    connectTimeout(500L, TimeUnit.MILLISECONDS)
+                    if (debug) {
+                        val logger = HttpLoggingInterceptor()
+                        logger.level = HttpLoggingInterceptor.Level.BODY
+                        addInterceptor(logger)
+                    }
+                }
+            }.build()
+        } else {
+            OkHttpClient.Builder().apply {
+                connectTimeout(500L, TimeUnit.MILLISECONDS)
+                if (debug) {
+                    val logger = HttpLoggingInterceptor()
+                    logger.level = HttpLoggingInterceptor.Level.BODY
+                    addInterceptor(logger)
+                }
+            }.build()
+        }
+    }
+
     var status = Status.UNKNOWN
 
     private var requestID = 0
 
     private suspend fun isAvailable() =
         withContext(Dispatchers.IO) {
-            service.checkAvailability().execute().isSuccessful
+            try {
+                service.checkAvailability().execute().isSuccessful
+            } catch (e: IOException) {
+                false
+            }
         }
 
 
@@ -62,6 +112,17 @@ class MediaRepository(url: String, debug: Boolean = false) {
         options.trustAllCerts(true)
         connectionConfigurator = ConnectionConfigurator {
             it.addRequestProperty("X-Auth-Token", BuildConfig.KEY)
+            (it as? HttpsURLConnection)?.let {c ->
+                // Install the all-trusting trust manager
+                // Install the all-trusting trust manager
+                val sc = SSLContext.getInstance("SSL")
+                sc.init(null, trustAllCerts, SecureRandom())
+                c.sslSocketFactory = sc.socketFactory
+
+                val allHostsValid = HostnameVerifier { _, _ -> true }
+
+                c.hostnameVerifier = allHostsValid
+            }
         }
     }
 
@@ -69,27 +130,7 @@ class MediaRepository(url: String, debug: Boolean = false) {
         .baseUrl(url)
         .addConverterFactory(GsonConverterFactory.create())
         .apply {
-            client(
-                if (url.startsWith("htpps")) {
-                    UnsafeOkHttpClientBuilder().also {
-                        it.builder.apply {
-                            if (debug) {
-                                val logger = HttpLoggingInterceptor()
-                                logger.level = HttpLoggingInterceptor.Level.BODY
-                                addInterceptor(logger)
-                            }
-                        }
-                    }.build()
-                } else {
-                  OkHttpClient.Builder().apply {
-                      if (debug) {
-                          val logger = HttpLoggingInterceptor()
-                          logger.level = HttpLoggingInterceptor.Level.BODY
-                          addInterceptor(logger)
-                      }
-                  }.build()
-                }
-            )
+            client(client)
         }
         .build()
 
@@ -121,10 +162,11 @@ class MediaRepository(url: String, debug: Boolean = false) {
     suspend fun getTrack(track: Track) =
         withContext(Dispatchers.IO) {
             with(
-                service.getTrack(key = BuildConfig.KEY, track.uri
-                    .replace("local:track:", "")
-                    .decodeUri()
-                    .encodeUri()
+                service.getTrack(
+                    key = BuildConfig.KEY, track.uri
+                        .replace("local:track:", "")
+                        .decodeUri()
+                        .encodeUri()
                 )
                     .execute()
             ) {
@@ -165,53 +207,37 @@ class MediaRepository(url: String, debug: Boolean = false) {
             @Path("name") name: String
         ): Call<ResponseBody>
     }
-}
 
-class UnsafeOkHttpClientBuilder {
-    val builder = OkHttpClient.Builder()
 
-    fun build(): OkHttpClient {
-        return try {
-            // Create a trust manager that does not validate certificate chains
-            val trustAllCerts: Array<TrustManager> = arrayOf(
-                object : X509TrustManager {
-                    @Throws(CertificateException::class)
-                    override fun checkClientTrusted(
-                        chain: Array<X509Certificate?>?,
-                        authType: String?
-                    ) {
-                    }
+    inner class UnsafeOkHttpClientBuilder {
+        val builder = OkHttpClient.Builder()
 
-                    @Throws(CertificateException::class)
-                    override fun checkServerTrusted(
-                        chain: Array<X509Certificate?>?,
-                        authType: String?
-                    ) {
-                    }
+        fun build(): OkHttpClient {
+            return try {
+                // Create a trust manager that does not validate certificate chains
 
-                    override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
-                }
-            )
 
-            // Install the all-trusting trust manager
-            val sslContext: SSLContext = SSLContext.getInstance("SSL")
-            sslContext.init(null, trustAllCerts, SecureRandom())
+                // Install the all-trusting trust manager
+                val sslContext: SSLContext = SSLContext.getInstance("SSL")
+                sslContext.init(null, trustAllCerts, SecureRandom())
 
-            // Create an ssl socket factory with our all-trusting manager
-            val sslSocketFactory: SSLSocketFactory = sslContext.socketFactory
-            builder.sslSocketFactory(sslSocketFactory, trustAllCerts[0] as X509TrustManager)
-            builder.connectionSpecs(
-                listOf(
-                    ConnectionSpec.MODERN_TLS,
-                    ConnectionSpec.COMPATIBLE_TLS
+                // Create an ssl socket factory with our all-trusting manager
+                val sslSocketFactory: SSLSocketFactory = sslContext.socketFactory
+                builder.sslSocketFactory(sslSocketFactory, trustAllCerts[0] as X509TrustManager)
+                builder.connectionSpecs(
+                    listOf(
+                        ConnectionSpec.MODERN_TLS,
+                        ConnectionSpec.COMPATIBLE_TLS
+                    )
                 )
-            )
-            builder.hostnameVerifier { _, _ -> true }
-            builder.build()
-        } catch (e: Exception) {
-            throw RuntimeException(e)
+                builder.hostnameVerifier { _, _ -> true }
+                builder.build()
+            } catch (e: Exception) {
+                throw RuntimeException(e)
+            }
         }
     }
+
 }
 
 fun String.decodeUri() = URLDecoder.decode(this, "UTF-8")

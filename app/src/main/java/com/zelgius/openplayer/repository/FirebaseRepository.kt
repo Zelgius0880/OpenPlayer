@@ -116,7 +116,7 @@ open class FirebaseRepository(val anonymousAuth: Boolean = true) {
         }
     }
 
-    protected suspend fun getSnapshot(firebaseObject: FirebaseObject): DocumentSnapshot {
+    suspend fun getSnapshot(firebaseObject: FirebaseObject): DocumentSnapshot {
         checkLogin()
         return suspendCoroutine { continuation ->
             db.collection(firebaseObject.firebasePath)

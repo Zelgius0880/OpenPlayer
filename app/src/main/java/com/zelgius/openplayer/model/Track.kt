@@ -9,5 +9,5 @@ data class Track (
     val album: Album
 ) : Media{
     @Json(ignored = true)
-    override var image: List<MediaImage> = album.image
+    override var images: List<MediaImage> = album.images
 }

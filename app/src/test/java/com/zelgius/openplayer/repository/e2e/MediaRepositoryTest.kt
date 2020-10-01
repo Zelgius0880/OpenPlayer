@@ -13,7 +13,7 @@ import org.junit.jupiter.api.fail
 internal class MediaRepositoryTest {
 
     private val repository by lazy {
-        MediaRepository("http://127.0.0.1:3000", true).apply {
+        MediaRepository("https://192.168.1.63", true).apply {
             session.rawResponseInspector =
                 RawResponseInspector { response -> // print the HTTP status code
                     println("HTTP status: " + response.statusCode)
