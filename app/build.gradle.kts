@@ -91,6 +91,9 @@ dependencies {
     implementation("com.squareup.retrofit2:converter-gson:2.9.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.9.0")
     implementation("com.thetransactioncompany:jsonrpc2-client:1.16.4")
+    implementation ("com.github.mvarnagiris:compose-glide-image:0.3.9")
+    implementation(group = "com.google.code.gson", name = "gson", version = "2.8.6")
+
 
     // Testing
     testImplementation("org.junit.jupiter:junit-jupiter-api:5.7.0")

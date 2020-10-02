@@ -17,11 +17,17 @@ import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.ui.tooling.preview.Preview
+import com.bumptech.glide.load.model.GlideUrl
+import com.bumptech.glide.load.model.LazyHeaders
+import com.google.common.net.HttpHeaders.AUTHORIZATION
+import com.koduok.compose.glideimage.GlideImage
+import com.zelgius.openplayer.BuildConfig
 import com.zelgius.openplayer.R
 import com.zelgius.openplayer.model.Album
 import com.zelgius.openplayer.model.Media
 import com.zelgius.openplayer.model.Track
 import java.util.*
+
 
 @Composable
 fun <T : Media> BigMedialList(list: List<T>, mediaClicked: (media: T) -> Unit = {}) {
@@ -70,12 +76,8 @@ fun <T : Media> BigMediaItem(item: T, onItemClick: (T) -> Unit = {}) {
                     onItemClick(item)
                 })
         ) {
-            Image(
-                asset = vectorResource(R.drawable.ic_music),
-                contentScale = ContentScale.Fit,
-                alignment = Alignment.Center,
-                modifier = Modifier.height(height = 100.dp) then Modifier.fillMaxWidth()
-            )
+
+            UrlImage(url = item.images.maxByOrNull { it.width }?.uri, default = R.drawable.ic_music)
             Row {
                 Column(Modifier.weight(1f, true)) {
                     Text(

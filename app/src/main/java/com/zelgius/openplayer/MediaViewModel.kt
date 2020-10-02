@@ -11,7 +11,7 @@ class MediaViewModel() : ViewModel(){
     private val resolver = MediaRepositoryResolver()
 
     fun getAlbumList() = liveData {
-        emit(resolver.getAlbumList())
+        emit(resolver.getAlbumListWithImage())
     }
     fun getTrackList(album: Album) = liveData {
         emit(resolver.getTrackList(album = album))

@@ -6,6 +6,8 @@ import com.zelgius.openplayer.model.Track
 import com.zelgius.openplayer.repository.MediaRepository
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.fail
 
@@ -13,7 +15,8 @@ import org.junit.jupiter.api.fail
 internal class MediaRepositoryTest {
 
     private val repository by lazy {
-        MediaRepository("https://192.168.1.63", true).apply {
+        //MediaRepository("https://192.168.1.63", true).apply {
+        MediaRepository("http://localhost:6680", true).apply {
             session.rawResponseInspector =
                 RawResponseInspector { response -> // print the HTTP status code
                     println("HTTP status: " + response.statusCode)
@@ -48,6 +51,28 @@ internal class MediaRepositoryTest {
             with(repository.getAlbumImage(uri) ?: fail { "response is null" }) {
                 Assertions.assertTrue(this.containsKey(uri))
                 Assertions.assertTrue(this[uri]?.isNotEmpty() == true)
+            }
+        }
+    }
+
+    @Test
+    fun getAlbumImageWithImages() {
+        runBlocking {
+            val map = repository
+                .getAlbumImage(
+                    *repository
+                        .getAlbumList()!!
+                        .map { it.uri }
+                        .toTypedArray()) ?: fail { "response is null" }
+
+            with(repository.getAlbumListWithImages()!!) {
+                forEach {
+                    assertTrue(map.containsKey(it.uri))
+                    assertEquals(map[it.uri]?.size, it.images.size)
+                    it.images.forEach {i ->
+                        assertTrue(i.uri.startsWith("http"))
+                    }
+                }
             }
         }
     }

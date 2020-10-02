@@ -1,5 +1,7 @@
 package com.zelgius.openplayer.repository
 
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import com.thetransactioncompany.jsonrpc2.JSONRPC2Request
 import com.thetransactioncompany.jsonrpc2.client.ConnectionConfigurator
 import com.thetransactioncompany.jsonrpc2.client.JSONRPC2Session
@@ -8,7 +10,7 @@ import com.zelgius.openplayer.model.Album
 import com.zelgius.openplayer.model.MediaImage
 import com.zelgius.openplayer.model.Track
 import com.zelgius.openplayer.parseAsJsonArray
-import com.zelgius.openplayer.parseAsJsonObject
+import com.zelgius.openplayer.repository.UnsafeOkHttpClientBuilder.Companion.trustAllCerts
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import net.minidev.json.JSONArray
@@ -24,7 +26,6 @@ import retrofit2.http.GET
 import retrofit2.http.Header
 import retrofit2.http.Path
 import java.io.IOException
-import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLDecoder
 import java.net.URLEncoder
@@ -35,31 +36,11 @@ import java.util.concurrent.TimeUnit
 import javax.net.ssl.*
 
 
-class MediaRepository(url: String, debug: Boolean = false) {
+class MediaRepository(private val url: String, debug: Boolean = false) {
     enum class Status {
         AVAILABLE, UNAVAILABLE, UNKNOWN
     }
 
-
-    private val trustAllCerts: Array<TrustManager> = arrayOf(
-        object : X509TrustManager {
-            @Throws(CertificateException::class)
-            override fun checkClientTrusted(
-                chain: Array<X509Certificate?>?,
-                authType: String?
-            ) {
-            }
-
-            @Throws(CertificateException::class)
-            override fun checkServerTrusted(
-                chain: Array<X509Certificate?>?,
-                authType: String?
-            ) {
-            }
-
-            override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
-        }
-    )
 
     private val client by lazy {
         if (url.startsWith("https")) {
@@ -112,7 +93,7 @@ class MediaRepository(url: String, debug: Boolean = false) {
         options.trustAllCerts(true)
         connectionConfigurator = ConnectionConfigurator {
             it.addRequestProperty("X-Auth-Token", BuildConfig.KEY)
-            (it as? HttpsURLConnection)?.let {c ->
+            (it as? HttpsURLConnection)?.let { c ->
                 // Install the all-trusting trust manager
                 // Install the all-trusting trust manager
                 val sc = SSLContext.getInstance("SSL")
@@ -143,12 +124,37 @@ class MediaRepository(url: String, debug: Boolean = false) {
         ).parseAsJsonArray<Album>()
 
 
-    suspend fun getAlbumImage(vararg uris: String) =
-        call(
-            method = "core.library.get_images",
-            params = mapOf("uris" to uris)
-        ).parseAsJsonObject<Map<String, List<MediaImage>>>()
+    suspend fun getAlbumListWithImages(): List<Album>? {
+        val albums = call(
+            method = "core.library.browse",
+            params = mapOf("uri" to "local:directory?type=album")
+        ).parseAsJsonArray<Album>()
+        if(albums != null) {
+            val uris = albums.map { it.uri }
+            val images = getAlbumImage(*uris.toTypedArray())
+            albums.forEach {
+                it.images = images?.get(it.uri)?: listOf()
+            }
+        }
 
+        return albums
+    }
+
+
+    suspend fun getAlbumImage(vararg uris: String) =
+        with(
+            call(
+                method = "core.library.get_images",
+                params = mapOf("uris" to uris)
+            )
+        ){
+            val type = object : TypeToken<Map<String, List<MediaImage>>>() {}.type
+            val map: Map<String, List<MediaImage>> = Gson().fromJson(this, type)
+            map.mapValues {
+                val list = it.value.map { i -> i.copy(uri = "$url/player${i.uri.replace("\\", "")}")}
+                list
+            }
+        }
 
     suspend fun getTrackList(album: Album) =
         call(
@@ -207,39 +213,58 @@ class MediaRepository(url: String, debug: Boolean = false) {
             @Path("name") name: String
         ): Call<ResponseBody>
     }
-
-
-    inner class UnsafeOkHttpClientBuilder {
-        val builder = OkHttpClient.Builder()
-
-        fun build(): OkHttpClient {
-            return try {
-                // Create a trust manager that does not validate certificate chains
-
-
-                // Install the all-trusting trust manager
-                val sslContext: SSLContext = SSLContext.getInstance("SSL")
-                sslContext.init(null, trustAllCerts, SecureRandom())
-
-                // Create an ssl socket factory with our all-trusting manager
-                val sslSocketFactory: SSLSocketFactory = sslContext.socketFactory
-                builder.sslSocketFactory(sslSocketFactory, trustAllCerts[0] as X509TrustManager)
-                builder.connectionSpecs(
-                    listOf(
-                        ConnectionSpec.MODERN_TLS,
-                        ConnectionSpec.COMPATIBLE_TLS
-                    )
-                )
-                builder.hostnameVerifier { _, _ -> true }
-                builder.build()
-            } catch (e: Exception) {
-                throw RuntimeException(e)
-            }
-        }
-    }
-
 }
 
 fun String.decodeUri() = URLDecoder.decode(this, "UTF-8")
 
 fun String.encodeUri() = URLEncoder.encode(this, "UTF-8")
+
+class UnsafeOkHttpClientBuilder {
+    companion object {
+        val trustAllCerts: Array<TrustManager> = arrayOf(
+            object : X509TrustManager {
+                @Throws(CertificateException::class)
+                override fun checkClientTrusted(
+                    chain: Array<X509Certificate?>?,
+                    authType: String?
+                ) {
+                }
+
+                @Throws(CertificateException::class)
+                override fun checkServerTrusted(
+                    chain: Array<X509Certificate?>?,
+                    authType: String?
+                ) {
+                }
+
+                override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+            }
+        )
+    }
+    val builder = OkHttpClient.Builder()
+
+    fun build(): OkHttpClient {
+        return try {
+            // Create a trust manager that does not validate certificate chains
+
+
+            // Install the all-trusting trust manager
+            val sslContext: SSLContext = SSLContext.getInstance("SSL")
+            sslContext.init(null, trustAllCerts, SecureRandom())
+
+            // Create an ssl socket factory with our all-trusting manager
+            val sslSocketFactory: SSLSocketFactory = sslContext.socketFactory
+            builder.sslSocketFactory(sslSocketFactory, trustAllCerts[0] as X509TrustManager)
+            builder.connectionSpecs(
+                listOf(
+                    ConnectionSpec.MODERN_TLS,
+                    ConnectionSpec.COMPATIBLE_TLS
+                )
+            )
+            builder.hostnameVerifier { _, _ -> true }
+            builder.build()
+        } catch (e: Exception) {
+            throw RuntimeException(e)
+        }
+    }
+}

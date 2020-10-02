@@ -2,6 +2,7 @@ package com.zelgius.openplayer.repository
 
 import androidx.lifecycle.LiveData
 import com.zelgius.openplayer.model.Album
+import com.zelgius.openplayer.model.MediaImage
 import com.zelgius.openplayer.model.Track
 import com.zelgius.openplayer.mutableLiveDataOf
 import kotlinx.coroutines.GlobalScope
@@ -18,16 +19,23 @@ open class MediaRepositoryResolver(
 
     private val firebaseRepository = FirebaseRepository(true)
 
-    private suspend fun createOutsideRepository(){
-            firebaseRepository.getSnapshot("open-player", "ips").getString("ip")?.let {
-                outsideRepository = MediaRepository("https://${it.trim()}")
-            }
+    private suspend fun createOutsideRepository() {
+        firebaseRepository.getSnapshot("open-player", "ips").getString("ip")?.let {
+            outsideRepository = MediaRepository("https://${it.trim()}")
+        }
     }
 
     suspend fun getAlbumList(): List<Album>? {
 
         return resolveRepository {
             getAlbumList()
+        }
+    }
+
+    suspend fun getAlbumListWithImage(): List<Album>? {
+
+        return resolveRepository {
+            getAlbumListWithImages()
         }
     }
 
@@ -38,7 +46,7 @@ open class MediaRepositoryResolver(
     }
 
     private suspend fun <T> resolveRepository(block: suspend MediaRepository.() -> T?): T? {
-        if(outsideRepository == null) createOutsideRepository()
+        if (outsideRepository == null) createOutsideRepository()
 
         val (insideStatus, outsideStatus) = insideRepository.status to outsideRepository?.status
 
