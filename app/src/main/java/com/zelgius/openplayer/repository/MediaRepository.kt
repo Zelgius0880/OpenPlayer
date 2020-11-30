@@ -1,5 +1,8 @@
 package com.zelgius.openplayer.repository
 
+import android.media.MediaDataSource
+import android.os.Build
+import androidx.annotation.RequiresApi
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.thetransactioncompany.jsonrpc2.JSONRPC2Request
@@ -11,6 +14,7 @@ import com.zelgius.openplayer.model.MediaImage
 import com.zelgius.openplayer.model.Track
 import com.zelgius.openplayer.parseAsJsonArray
 import com.zelgius.openplayer.repository.UnsafeOkHttpClientBuilder.Companion.trustAllCerts
+import io.grpc.KnownLength
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import net.minidev.json.JSONArray
@@ -25,7 +29,10 @@ import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.GET
 import retrofit2.http.Header
 import retrofit2.http.Path
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.io.InputStream
 import java.net.URL
 import java.net.URLDecoder
 import java.net.URLEncoder
@@ -121,19 +128,19 @@ class MediaRepository(private val url: String, debug: Boolean = false) {
         call(
             method = "core.library.browse",
             params = mapOf("uri" to "local:directory?type=album")
-        ).parseAsJsonArray<Album>()
+        )?.parseAsJsonArray<Album>()
 
 
     suspend fun getAlbumListWithImages(): List<Album>? {
         val albums = call(
             method = "core.library.browse",
             params = mapOf("uri" to "local:directory?type=album")
-        ).parseAsJsonArray<Album>()
+        )?.parseAsJsonArray<Album>()
         if(albums != null) {
             val uris = albums.map { it.uri }
             val images = getAlbumImage(*uris.toTypedArray())
             albums.forEach {
-                it.images = images?.get(it.uri)?: listOf()
+                it.images = images[it.uri] ?: listOf()
             }
         }
 
@@ -150,56 +157,56 @@ class MediaRepository(private val url: String, debug: Boolean = false) {
         ){
             val type = object : TypeToken<Map<String, List<MediaImage>>>() {}.type
             val map: Map<String, List<MediaImage>> = Gson().fromJson(this, type)
-            map.mapValues {
-                val list = it.value.map { i -> i.copy(uri = "$url/player${i.uri.replace("\\", "")}")}
+            /*map.mapValues {
+                val list = it.value.map { i -> i.copy(uri = "$url/${i.uri.replace("\\", "")}")}
                 list
-            }
+            }*/
+
+            map
         }
 
     suspend fun getTrackList(album: Album) =
         call(
             method = "core.library.browse",
             params = mapOf("uri" to album.uri)
-        ).parseAsJsonArray<Album>()?.map {
-            Track(it.name, it.type, it.uri, album)
-        }
-
-
-    suspend fun getTrack(track: Track) =
-        withContext(Dispatchers.IO) {
-            with(
-                service.getTrack(
-                    key = BuildConfig.KEY, track.uri
-                        .replace("local:track:", "")
-                        .decodeUri()
-                        .encodeUri()
-                )
-                    .execute()
-            ) {
-                this.body()?.byteStream()
+        )?.parseAsJsonArray<Album>()?.map {
+            Track(it.name, it.type, it.uri, album).apply {
+                serverIp = url
             }
         }
 
+    suspend fun getImageStream(image: MediaImage) = withContext(Dispatchers.IO) {
+        service.getImageStream(BuildConfig.KEY, image.uri
+            .replace("\\", "")
+            .replace("/", "")
+            .replaceFirst("local", ""))
+            .execute()
+    }
 
     private suspend fun call(method: String, params: Map<String, Any>) =
         withContext(
             Dispatchers.IO
         ) {
-            val request = JSONRPC2Request(method, params, requestID)
-            val response = session.send(request)
+            try {
+                val request = JSONRPC2Request(method, params, requestID)
+                val response = session.send(request)
 
-            ++requestID
+                ++requestID
 
-            if (response!!.indicatesSuccess()) {
-                println(response.result)
+                if (response!!.indicatesSuccess()) {
+                    println(response.result)
 
-                if (response.result is JSONObject)
-                    (response.result as JSONObject).toJSONString()
-                else
-                    (response.result as JSONArray).toJSONString()
-            } else {
-                println(response.error.message)
-                error(response.error)
+                    if (response.result is JSONObject)
+                        (response.result as JSONObject).toJSONString()
+                    else
+                        (response.result as JSONArray).toJSONString()
+                } else {
+                    println(response.error.message)
+                    error(response.error)
+                }
+            } catch (e: IOException) {
+                e.printStackTrace()
+                null
             }
         }
 
@@ -211,6 +218,13 @@ class MediaRepository(private val url: String, debug: Boolean = false) {
         fun getTrack(
             @Header("X-Auth-Token") key: String,
             @Path("name") name: String
+        ): Call<ResponseBody>
+
+
+        @GET("/local/{uri}")
+        fun getImageStream(
+            @Header("X-Auth-Token") key: String,
+            @Path("uri") uri: String
         ): Call<ResponseBody>
     }
 }
@@ -267,4 +281,5 @@ class UnsafeOkHttpClientBuilder {
             throw RuntimeException(e)
         }
     }
+
 }
